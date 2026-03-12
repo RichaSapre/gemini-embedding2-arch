@@ -1,0 +1,11 @@
+{
+  "name": "gemini-embedding2-arch",
+  "version": "1.0.0",
+  "description": "Visualizing how Gemini Embedding 2 works",
+  "scripts": {
+    "test": "htmlhint *.html"
+  },
+  "devDependencies": {
+    "htmlhint": "^1.0.0"
+  }
+}
