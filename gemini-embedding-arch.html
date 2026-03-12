@@ -1,0 +1,1102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>How Gemini Embedding 2 Works</title>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@300;400;600;700;800;900&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #f0f4ff;
+  --surface: #ffffff;
+  --border: #e0e7ff;
+  --text: #1e1b4b;
+  --muted: #6b7280;
+  --google-blue: #4285f4;
+  --google-red: #ea4335;
+  --google-yellow: #fbbc04;
+  --google-green: #34a853;
+
+  --text-color: #6366f1;
+  --image-color: #f59e0b;
+  --audio-color: #10b981;
+  --video-color: #ef4444;
+  --doc-color: #8b5cf6;
+
+  --vector-color: #4285f4;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Nunito', sans-serif;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* Soft dot grid background */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: radial-gradient(circle, #c7d2fe 1px, transparent 1px);
+  background-size: 28px 28px;
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+header {
+  position: relative;
+  z-index: 10;
+  text-align: center;
+  padding: 48px 24px 32px;
+}
+
+.google-dots {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  animation: dotBounce 1.5s ease-in-out infinite;
+}
+.dot:nth-child(1) { background: var(--google-blue); animation-delay: 0s; }
+.dot:nth-child(2) { background: var(--google-red); animation-delay: 0.15s; }
+.dot:nth-child(3) { background: var(--google-yellow); animation-delay: 0.3s; }
+.dot:nth-child(4) { background: var(--google-green); animation-delay: 0.45s; }
+
+@keyframes dotBounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+
+.main-title {
+  font-size: clamp(24px, 4vw, 52px);
+  font-weight: 900;
+  color: var(--text);
+  letter-spacing: -1px;
+  line-height: 1.1;
+}
+
+.main-title span { color: var(--google-blue); }
+
+.tagline {
+  margin-top: 10px;
+  font-size: 15px;
+  color: var(--muted);
+  font-weight: 400;
+}
+
+/* Main container */
+.container {
+  position: relative;
+  z-index: 10;
+  max-width: 1060px;
+  margin: 0 auto;
+  padding: 32px 24px 60px;
+}
+
+/* Step navigation */
+.steps-nav {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 32px;
+  flex-wrap: wrap;
+}
+
+.step-btn {
+  padding: 8px 18px;
+  border-radius: 24px;
+  border: 2px solid var(--border);
+  background: white;
+  color: var(--muted);
+  font-family: 'Nunito', sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.step-btn:hover {
+  border-color: var(--step-color);
+  color: var(--step-color);
+}
+
+.step-btn.active {
+  background: var(--step-color);
+  border-color: var(--step-color);
+  color: white;
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--step-color) 35%, transparent);
+}
+
+/* Stage area */
+.stage {
+  background: white;
+  border-radius: 20px;
+  border: 2px solid var(--border);
+  padding: 32px;
+  min-height: 420px;
+  box-shadow: 0 8px 40px rgba(99,102,241,0.08);
+  position: relative;
+  overflow: hidden;
+}
+
+.stage-content { display: none; }
+.stage-content.active { display: block; }
+
+/* Step 1: Input types */
+.input-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.input-card {
+  border-radius: 16px;
+  padding: 24px 16px;
+  text-align: center;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: all 0.25s;
+  position: relative;
+  overflow: hidden;
+}
+
+.input-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  opacity: 0.08;
+  background: var(--card-color);
+  border-radius: 14px;
+}
+
+.input-card:hover {
+  border-color: var(--card-color);
+  transform: translateY(-4px);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--card-color) 20%, transparent);
+}
+
+.input-card.selected {
+  border-color: var(--card-color);
+  background: color-mix(in srgb, var(--card-color) 8%, white);
+  transform: translateY(-4px);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--card-color) 25%, transparent);
+}
+
+.card-emoji { font-size: 40px; margin-bottom: 10px; display: block; }
+
+.card-title {
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--card-color);
+  margin-bottom: 6px;
+}
+
+.card-desc {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.card-process {
+  margin-top: 10px;
+  padding: 6px 10px;
+  background: white;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--card-color);
+  font-family: 'Fira Code', monospace;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.input-card.selected .card-process,
+.input-card:hover .card-process { opacity: 1; }
+
+/* Step 2: Encoding */
+.encoding-demo {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 20px;
+  align-items: center;
+  margin-top: 16px;
+}
+
+.encoding-input {
+  border-radius: 14px;
+  padding: 20px;
+  border: 2px solid var(--border);
+  background: #fafafa;
+}
+
+.encoding-arrow {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.arrow-box {
+  background: var(--google-blue);
+  color: white;
+  border-radius: 12px;
+  padding: 12px 16px;
+  font-size: 12px;
+  font-weight: 800;
+  text-align: center;
+  min-width: 100px;
+  box-shadow: 0 4px 14px rgba(66,133,244,0.3);
+}
+
+.arrow-line {
+  font-size: 24px;
+  color: var(--google-blue);
+  animation: arrowPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes arrowPulse {
+  0%,100% { transform: translateX(0); opacity: 0.6; }
+  50% { transform: translateX(4px); opacity: 1; }
+}
+
+.encoding-output {
+  border-radius: 14px;
+  padding: 20px;
+  border: 2px solid var(--google-blue);
+  background: #f0f7ff;
+}
+
+.vector-display {
+  font-family: 'Fira Code', monospace;
+  font-size: 12px;
+  color: var(--google-blue);
+  line-height: 1.8;
+  word-break: break-all;
+}
+
+.vector-bar {
+  display: flex;
+  gap: 3px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.vbar {
+  width: 12px;
+  border-radius: 3px;
+  background: var(--google-blue);
+  transition: height 0.4s ease;
+}
+
+/* Encoding tabs */
+.encoding-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.enc-tab {
+  padding: 6px 14px;
+  border-radius: 20px;
+  border: 2px solid var(--border);
+  background: white;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-family: 'Nunito', sans-serif;
+}
+
+.enc-tab:hover { border-color: var(--tab-color); color: var(--tab-color); }
+.enc-tab.active {
+  background: var(--tab-color);
+  border-color: var(--tab-color);
+  color: white;
+}
+
+/* Step 3: Vector Space */
+.vector-space-container {
+  position: relative;
+  width: 100%;
+  height: 360px;
+  border-radius: 16px;
+  border: 2px solid var(--border);
+  background: #0f172a;
+  overflow: hidden;
+  margin-top: 16px;
+  cursor: crosshair;
+}
+
+.vs-label {
+  position: absolute;
+  top: 12px;
+  left: 16px;
+  font-size: 11px;
+  color: rgba(255,255,255,0.4);
+  font-family: 'Fira Code', monospace;
+  letter-spacing: 1px;
+}
+
+.vs-dot {
+  position: absolute;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  cursor: pointer;
+  transition: all 0.3s;
+  animation: floatDot 3s ease-in-out infinite;
+}
+
+.vs-dot:hover { transform: scale(1.4) !important; z-index: 10; }
+
+.vs-dot .dot-label {
+  position: absolute;
+  bottom: -22px;
+  white-space: nowrap;
+  font-size: 10px;
+  font-weight: 700;
+  color: rgba(255,255,255,0.7);
+  font-family: 'Nunito', sans-serif;
+  pointer-events: none;
+}
+
+@keyframes floatDot {
+  0%,100% { transform: translateY(0px); }
+  50% { transform: translateY(-5px); }
+}
+
+/* Cluster lines (SVG overlay) */
+.vs-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.cluster-circle {
+  fill: none;
+  stroke-width: 1;
+  stroke-dasharray: 6 4;
+  animation: rotateDash 20s linear infinite;
+}
+
+@keyframes rotateDash {
+  from { stroke-dashoffset: 0; }
+  to { stroke-dashoffset: -100; }
+}
+
+.search-result {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(255,255,255,0.1);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255,255,255,0.2);
+  border-radius: 12px;
+  padding: 10px 20px;
+  font-size: 12px;
+  color: white;
+  font-weight: 600;
+  text-align: center;
+  min-width: 280px;
+  transition: all 0.3s;
+}
+
+/* Step 4: Search demo */
+.search-demo {
+  margin-top: 16px;
+}
+
+.search-bar {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.search-input {
+  flex: 1;
+  padding: 12px 18px;
+  border-radius: 12px;
+  border: 2px solid var(--border);
+  font-family: 'Nunito', sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  background: white;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.search-input:focus { border-color: var(--google-blue); }
+
+.search-go {
+  padding: 12px 24px;
+  border-radius: 12px;
+  background: var(--google-blue);
+  color: white;
+  border: none;
+  font-family: 'Nunito', sans-serif;
+  font-size: 14px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: all 0.2s;
+  box-shadow: 0 4px 14px rgba(66,133,244,0.3);
+}
+
+.search-go:hover {
+  background: #1a73e8;
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(66,133,244,0.4);
+}
+
+.search-queries {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+
+.query-chip {
+  padding: 6px 14px;
+  border-radius: 20px;
+  background: white;
+  border: 2px solid var(--border);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s;
+  color: var(--muted);
+}
+
+.query-chip:hover {
+  border-color: var(--google-blue);
+  color: var(--google-blue);
+  background: #f0f7ff;
+}
+
+.results-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 10px;
+  min-height: 120px;
+}
+
+.result-card {
+  border-radius: 12px;
+  padding: 14px;
+  border: 2px solid transparent;
+  background: #fafafa;
+  opacity: 0;
+  transform: translateY(10px);
+  transition: all 0.3s;
+  text-align: center;
+}
+
+.result-card.show {
+  opacity: 1;
+  transform: translateY(0);
+  border-color: var(--res-color);
+  background: color-mix(in srgb, var(--res-color) 6%, white);
+}
+
+.result-emoji { font-size: 28px; margin-bottom: 6px; display: block; }
+.result-type {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--res-color);
+  margin-bottom: 4px;
+}
+.result-desc { font-size: 11px; color: var(--muted); line-height: 1.4; }
+
+.similarity-bar {
+  margin-top: 8px;
+  height: 4px;
+  border-radius: 2px;
+  background: #e0e7ff;
+  overflow: hidden;
+}
+
+.similarity-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--res-color);
+  width: 0%;
+  transition: width 0.8s ease;
+}
+
+/* Info panel */
+.info-panel {
+  margin-top: 20px;
+  padding: 20px 24px;
+  border-radius: 14px;
+  background: white;
+  border: 2px solid var(--border);
+  transition: all 0.25s;
+  min-height: 80px;
+}
+
+.info-panel.colored {
+  border-color: var(--panel-color);
+  background: color-mix(in srgb, var(--panel-color) 5%, white);
+}
+
+.info-title {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--panel-color, var(--text));
+  margin-bottom: 6px;
+}
+
+.info-body {
+  font-size: 13.5px;
+  color: var(--muted);
+  line-height: 1.7;
+  font-weight: 400;
+}
+
+.hint {
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+  padding: 16px;
+}
+
+/* Section title */
+.section-title {
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.section-title::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.stage-content.active { animation: fadeUp 0.35s ease; }
+
+@media (max-width: 640px) {
+  .encoding-demo { grid-template-columns: 1fr; }
+  .arrow-line { transform: rotate(90deg); }
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="google-dots">
+    <div class="dot"></div>
+    <div class="dot"></div>
+    <div class="dot"></div>
+    <div class="dot"></div>
+  </div>
+  <div class="main-title">How <span>Gemini Embedding 2</span> Works</div>
+  <div class="tagline">My study notes, turned into a system design</div>
+</header>
+
+<div class="container">
+
+  <!-- Step Navigation -->
+  <div class="steps-nav">
+    <button class="step-btn active" style="--step-color:#6366f1" data-step="1">① Input Types</button>
+    <button class="step-btn" style="--step-color:#f59e0b" data-step="2">② How Encoding Works</button>
+    <button class="step-btn" style="--step-color:#10b981" data-step="3">③ The Vector Space</button>
+    <button class="step-btn" style="--step-color:#4285f4" data-step="4">④ Search in Action</button>
+  </div>
+
+  <!-- Stage -->
+  <div class="stage">
+
+    <!-- STEP 1: Input Types -->
+    <div class="stage-content active" id="step-1">
+      <div class="section-title">Step 1 · Everything Goes In</div>
+      <p style="font-size:14px;color:var(--muted);margin-bottom:16px;font-weight:500;">Gemini Embedding 2 accepts 5 types of content. Click each one to learn how it gets processed. 👇</p>
+      <div class="input-grid">
+        <div class="input-card" style="--card-color:#6366f1" data-info="text">
+          <span class="card-emoji">📝</span>
+          <div class="card-title">Text</div>
+          <div class="card-desc">Words, sentences, paragraphs, any written content</div>
+          <div class="card-process">tokenize → embed</div>
+        </div>
+        <div class="input-card" style="--card-color:#f59e0b" data-info="image">
+          <span class="card-emoji">🖼️</span>
+          <div class="card-title">Image</div>
+          <div class="card-desc">Photos, screenshots, illustrations, diagrams</div>
+          <div class="card-process">patch grid → encode</div>
+        </div>
+        <div class="input-card" style="--card-color:#10b981" data-info="audio">
+          <span class="card-emoji">🎙️</span>
+          <div class="card-title">Audio</div>
+          <div class="card-desc">Voice recordings, music, sound clips, podcasts</div>
+          <div class="card-process">spectrogram → encode</div>
+        </div>
+        <div class="input-card" style="--card-color:#ef4444" data-info="video">
+          <span class="card-emoji">🎬</span>
+          <div class="card-title">Video</div>
+          <div class="card-desc">Clips, recordings, screen captures, reels</div>
+          <div class="card-process">frames + audio → fuse</div>
+        </div>
+        <div class="input-card" style="--card-color:#8b5cf6" data-info="doc">
+          <span class="card-emoji">📄</span>
+          <div class="card-title">Documents</div>
+          <div class="card-desc">PDFs, slides, spreadsheets, reports</div>
+          <div class="card-process">parse → chunk → embed</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- STEP 2: Encoding -->
+    <div class="stage-content" id="step-2">
+      <div class="section-title">Step 2 · How Each Type Becomes a Vector</div>
+      <div class="encoding-tabs">
+        <button class="enc-tab active" style="--tab-color:#6366f1" data-enc="text">📝 Text</button>
+        <button class="enc-tab" style="--tab-color:#f59e0b" data-enc="image">🖼️ Image</button>
+        <button class="enc-tab" style="--tab-color:#10b981" data-enc="audio">🎙️ Audio</button>
+        <button class="enc-tab" style="--tab-color:#ef4444" data-enc="video">🎬 Video</button>
+      </div>
+      <div class="encoding-demo">
+        <div class="encoding-input" id="enc-input">
+          <div style="font-size:13px;font-weight:700;color:#6366f1;margin-bottom:10px;">INPUT</div>
+          <div id="enc-input-content" style="font-size:28px;text-align:center;padding:12px 0;">🐕 "A golden retriever"</div>
+          <div id="enc-input-desc" style="font-size:12px;color:var(--muted);margin-top:8px;line-height:1.5;">Words are broken into tokens. Each token is mapped to its learned meaning. Context between words is captured.</div>
+        </div>
+        <div class="encoding-arrow">
+          <div class="arrow-line">→</div>
+          <div class="arrow-box" id="enc-process">Transformer<br/>Encoder</div>
+          <div class="arrow-line">→</div>
+        </div>
+        <div class="encoding-output">
+          <div style="font-size:13px;font-weight:700;color:#4285f4;margin-bottom:10px;">OUTPUT VECTOR</div>
+          <div class="vector-display" id="vec-display">[0.82, 0.14, 0.91, 0.33, 0.67, 0.08, 0.55, 0.79...]</div>
+          <div class="vector-bar" id="vec-bars"></div>
+          <div style="font-size:11px;color:var(--muted);margin-top:10px;">768 numbers that capture meaning</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- STEP 3: Vector Space -->
+    <div class="stage-content" id="step-3">
+      <div class="section-title">Step 3 · One Shared Map for Everything</div>
+      <p style="font-size:13px;color:var(--muted);margin-bottom:12px;font-weight:500;">Hover over any dot to see what it is. Similar things cluster together, regardless of file type! 🗺️</p>
+      <div class="vector-space-container" id="vector-space">
+        <div class="vs-label">VECTOR SPACE · 2D PROJECTION</div>
+
+        <svg class="vs-svg" id="vs-svg">
+          <!-- Cluster circles will be injected here -->
+        </svg>
+
+        <!-- Dots injected by JS -->
+        <div class="search-result" id="vs-result">
+          👆 Hover any dot to explore the vector space
+        </div>
+      </div>
+    </div>
+
+    <!-- STEP 4: Search Demo -->
+    <div class="stage-content" id="step-4">
+      <div class="section-title">Step 4 · Search Across Everything at Once</div>
+      <p style="font-size:13px;color:var(--muted);margin-bottom:16px;font-weight:500;">Try a search query and watch it find results across ALL file types simultaneously. 🔍</p>
+      <div class="search-bar">
+        <input class="search-input" id="search-input" type="text" placeholder="Try: golden retriever, Paris, rain, product launch..."/>
+        <button class="search-go" id="search-go">Search ✨</button>
+      </div>
+      <div class="search-queries">
+        <div class="query-chip" data-q="golden retriever">🐕 golden retriever</div>
+        <div class="query-chip" data-q="Paris">🗼 Paris</div>
+        <div class="query-chip" data-q="rain">🌧️ rain</div>
+        <div class="query-chip" data-q="product launch">🚀 product launch</div>
+        <div class="query-chip" data-q="music concert">🎵 music concert</div>
+      </div>
+      <div class="results-grid" id="results-grid">
+        <div class="hint" style="grid-column:1/-1">Enter a query above to see multimodal search in action 🎯</div>
+      </div>
+    </div>
+
+  </div><!-- /stage -->
+
+  <!-- Info Panel -->
+  <div class="info-panel" id="info-panel">
+    <div class="hint">👆 Click any element above to learn more about it</div>
+  </div>
+
+</div>
+
+<script>
+// ── Step Navigation ──
+document.querySelectorAll('.step-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.step-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    const step = btn.dataset.step;
+    document.querySelectorAll('.stage-content').forEach(s => s.classList.remove('active'));
+    document.getElementById('step-' + step).classList.add('active');
+    resetInfoPanel();
+  });
+});
+
+// ── Step 1: Input cards ──
+const inputInfo = {
+  text: {
+    color: '#6366f1',
+    title: '📝 How Text Gets Encoded',
+    body: 'Text is broken into small chunks called tokens, roughly one token per word. Each token gets mapped to a position in a learned vocabulary of meanings. The model reads all tokens together and captures context: "bank" near "river" means something different than "bank" near "money." The result is a single vector representing the whole sentence\'s meaning.'
+  },
+  image: {
+    color: '#f59e0b',
+    title: '🖼️ How Images Get Encoded',
+    body: 'Images get sliced into a 16x16 grid of small patches, like cutting a photo into tiles. Each tile becomes numbers representing color, brightness and texture. The model then reads how all those tiles relate to each other, edges, shapes, objects, and produces one vector that represents what the image means, not just what it looks like pixel by pixel.'
+  },
+  audio: {
+    color: '#10b981',
+    title: '🎙️ How Audio Gets Encoded',
+    body: 'Audio is first converted into a spectrogram, a visual heatmap showing which frequencies are loud or quiet at each moment in time. Think of it like a fingerprint of the sound. That heatmap is then treated like an image and goes through the same patching process. So audio secretly becomes visual before it becomes a vector!'
+  },
+  video: {
+    color: '#ef4444',
+    title: '🎬 How Video Gets Encoded',
+    body: 'Video is broken into individual frames sampled at regular intervals, plus the audio track extracted separately. Each frame goes through image encoding, the audio goes through audio encoding, and then both streams are fused together into one vector that captures the full meaning of the clip over time.'
+  },
+  doc: {
+    color: '#8b5cf6',
+    title: '📄 How Documents Get Encoded',
+    body: 'Documents are parsed to extract their text content, then chunked into manageable sections. Each chunk gets embedded separately, and the embeddings are combined to represent the whole document\'s meaning. Tables, headers and structure are all considered to preserve the document\'s context.'
+  }
+};
+
+document.querySelectorAll('.input-card').forEach(card => {
+  card.addEventListener('click', () => {
+    document.querySelectorAll('.input-card').forEach(c => c.classList.remove('selected'));
+    card.classList.add('selected');
+    const info = inputInfo[card.dataset.info];
+    showInfo(info.color, info.title, info.body);
+  });
+});
+
+// ── Step 2: Encoding tabs ──
+const encData = {
+  text: {
+    color: '#6366f1',
+    input: '🐕 "A golden retriever"',
+    desc: 'Words are broken into tokens. Each token is mapped to its learned meaning. Context between words is captured.',
+    process: 'Transformer\nEncoder',
+    vec: '[0.82, 0.14, 0.91, 0.33, 0.67, 0.08, 0.55, 0.79...]',
+    bars: [0.82, 0.14, 0.91, 0.33, 0.67, 0.08, 0.55, 0.79, 0.45, 0.62, 0.28, 0.73]
+  },
+  image: {
+    color: '#f59e0b',
+    input: '🖼️ Photo sliced into 16×16 patches',
+    desc: 'Each patch = color + brightness + texture values. Model reads spatial relationships between patches.',
+    process: 'Vision\nTransformer',
+    vec: '[0.31, 0.77, 0.22, 0.68, 0.15, 0.89, 0.44, 0.61...]',
+    bars: [0.31, 0.77, 0.22, 0.68, 0.15, 0.89, 0.44, 0.61, 0.88, 0.19, 0.53, 0.40]
+  },
+  audio: {
+    color: '#10b981',
+    input: '🎙️ Sound → Spectrogram heatmap',
+    desc: 'Audio converted to a frequency heatmap over time. That heatmap treated like an image and patched.',
+    process: 'Audio\nEncoder',
+    vec: '[0.55, 0.43, 0.78, 0.12, 0.94, 0.36, 0.61, 0.27...]',
+    bars: [0.55, 0.43, 0.78, 0.12, 0.94, 0.36, 0.61, 0.27, 0.80, 0.47, 0.69, 0.15]
+  },
+  video: {
+    color: '#ef4444',
+    input: '🎬 Frames sampled + audio extracted',
+    desc: 'Frames encoded as images, audio encoded separately, then both streams fused into one vector.',
+    process: 'Multimodal\nFusion',
+    vec: '[0.71, 0.38, 0.84, 0.29, 0.57, 0.93, 0.16, 0.68...]',
+    bars: [0.71, 0.38, 0.84, 0.29, 0.57, 0.93, 0.16, 0.68, 0.42, 0.75, 0.31, 0.58]
+  }
+};
+
+function renderBars(bars, color) {
+  const container = document.getElementById('vec-bars');
+  container.innerHTML = '';
+  bars.forEach(val => {
+    const bar = document.createElement('div');
+    bar.className = 'vbar';
+    bar.style.height = (val * 40 + 8) + 'px';
+    bar.style.background = color;
+    bar.style.opacity = 0.3 + val * 0.7;
+    container.appendChild(bar);
+  });
+}
+
+renderBars(encData.text.bars, '#4285f4');
+
+document.querySelectorAll('.enc-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.enc-tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    const d = encData[tab.dataset.enc];
+    document.getElementById('enc-input-content').textContent = d.input;
+    document.getElementById('enc-input-desc').textContent = d.desc;
+    document.getElementById('enc-process').textContent = d.process;
+    document.getElementById('vec-display').textContent = d.vec;
+    document.getElementById('vec-display').style.color = d.color;
+    renderBars(d.bars, d.color);
+  });
+});
+
+// ── Step 3: Vector Space ──
+const dots = [
+  // Dog cluster
+  { x: 18, y: 22, emoji: '🐕', label: 'Text: "golden retriever"', color: '#6366f1', cluster: 'dog' },
+  { x: 24, y: 28, emoji: '🖼️', label: 'Photo: dog playing fetch', color: '#f59e0b', cluster: 'dog' },
+  { x: 14, y: 32, emoji: '🎬', label: 'Video: puppy running', color: '#ef4444', cluster: 'dog' },
+  { x: 22, y: 18, emoji: '📄', label: 'Article: dog training tips', color: '#8b5cf6', cluster: 'dog' },
+
+  // Paris cluster
+  { x: 60, y: 20, emoji: '🗼', label: 'Photo: Eiffel Tower', color: '#f59e0b', cluster: 'paris' },
+  { x: 66, y: 26, emoji: '📝', label: 'Text: "Paris landmarks"', color: '#6366f1', cluster: 'paris' },
+  { x: 58, y: 30, emoji: '🎬', label: 'Video: Paris travel vlog', color: '#ef4444', cluster: 'paris' },
+  { x: 70, y: 18, emoji: '🎙️', label: 'Audio: French podcast', color: '#10b981', cluster: 'paris' },
+
+  // Rain cluster
+  { x: 38, y: 58, emoji: '🌧️', label: 'Photo: rainy street', color: '#f59e0b', cluster: 'rain' },
+  { x: 44, y: 64, emoji: '🎙️', label: 'Audio: rain sounds', color: '#10b981', cluster: 'rain' },
+  { x: 34, y: 65, emoji: '📝', label: 'Text: "rainy weather"', color: '#6366f1', cluster: 'rain' },
+  { x: 42, y: 55, emoji: '🎬', label: 'Video: storm footage', color: '#ef4444', cluster: 'rain' },
+
+  // Music cluster
+  { x: 74, y: 62, emoji: '🎵', label: 'Audio: concert recording', color: '#10b981', cluster: 'music' },
+  { x: 80, y: 56, emoji: '🎬', label: 'Video: live performance', color: '#ef4444', cluster: 'music' },
+  { x: 76, y: 70, emoji: '📝', label: 'Text: "music festival"', color: '#6366f1', cluster: 'music' },
+  { x: 68, y: 58, emoji: '🖼️', label: 'Photo: concert stage', color: '#f59e0b', cluster: 'music' },
+];
+
+const clusterLabels = {
+  dog: { x: '14%', y: '8%', label: '🐕 Dog / Pets', color: 'rgba(99,102,241,0.6)' },
+  paris: { x: '56%', y: '8%', label: '🗼 Paris', color: 'rgba(245,158,11,0.6)' },
+  rain: { x: '30%', y: '75%', label: '🌧️ Rain / Weather', color: 'rgba(16,185,129,0.6)' },
+  music: { x: '66%', y: '75%', label: '🎵 Music', color: 'rgba(239,68,68,0.6)' },
+};
+
+function buildVectorSpace() {
+  const space = document.getElementById('vector-space');
+  const svg = document.getElementById('vs-svg');
+
+  // Draw cluster ellipses
+  const clusters = {
+    dog: { cx: 19, cy: 26, rx: 12, ry: 10 },
+    paris: { cx: 64, cy: 24, rx: 12, ry: 10 },
+    rain: { cx: 39, cy: 61, rx: 10, ry: 9 },
+    music: { cx: 74, cy: 62, rx: 10, ry: 9 },
+  };
+
+  const colors = { dog: '#6366f1', paris: '#f59e0b', rain: '#10b981', music: '#ef4444' };
+
+  Object.entries(clusters).forEach(([key, c]) => {
+    const ellipse = document.createElementNS('http://www.w3.org/2000/svg', 'ellipse');
+    ellipse.setAttribute('cx', c.cx + '%');
+    ellipse.setAttribute('cy', c.cy + '%');
+    ellipse.setAttribute('rx', c.rx + '%');
+    ellipse.setAttribute('ry', c.ry + '%');
+    ellipse.setAttribute('stroke', colors[key]);
+    ellipse.setAttribute('stroke-opacity', '0.35');
+    ellipse.setAttribute('fill', colors[key]);
+    ellipse.setAttribute('fill-opacity', '0.06');
+    ellipse.setAttribute('stroke-width', '1.5');
+    ellipse.setAttribute('stroke-dasharray', '6 4');
+    ellipse.classList.add('cluster-circle');
+    svg.appendChild(ellipse);
+
+    // Cluster label
+    const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    text.setAttribute('x', (c.cx) + '%');
+    text.setAttribute('y', (c.cy - c.ry - 2) + '%');
+    text.setAttribute('text-anchor', 'middle');
+    text.setAttribute('fill', colors[key]);
+    text.setAttribute('fill-opacity', '0.7');
+    text.setAttribute('font-size', '10');
+    text.setAttribute('font-family', 'Nunito, sans-serif');
+    text.setAttribute('font-weight', '700');
+    svg.appendChild(text);
+  });
+
+  // Render dots
+  dots.forEach((d, i) => {
+    const dot = document.createElement('div');
+    dot.className = 'vs-dot';
+    dot.style.width = '36px';
+    dot.style.height = '36px';
+    dot.style.left = d.x + '%';
+    dot.style.top = d.y + '%';
+    dot.style.transform = 'translate(-50%, -50%)';
+    dot.style.animationDelay = (i * 0.3) + 's';
+    dot.style.background = d.color + '22';
+    dot.style.border = '2px solid ' + d.color;
+    dot.style.fontSize = '16px';
+    dot.textContent = d.emoji;
+
+    const label = document.createElement('div');
+    label.className = 'dot-label';
+    label.textContent = d.label;
+    dot.appendChild(label);
+
+    dot.addEventListener('mouseenter', () => {
+      document.getElementById('vs-result').textContent =
+        d.emoji + ' ' + d.label + ' · Cluster: ' + d.cluster;
+    });
+
+    space.appendChild(dot);
+  });
+
+  // Grid lines
+  for (let i = 1; i < 5; i++) {
+    const vline = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    vline.setAttribute('x1', (i * 20) + '%'); vline.setAttribute('y1', '0');
+    vline.setAttribute('x2', (i * 20) + '%'); vline.setAttribute('y2', '100%');
+    vline.setAttribute('stroke', 'rgba(255,255,255,0.04)'); vline.setAttribute('stroke-width', '1');
+    svg.appendChild(vline);
+
+    const hline = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    hline.setAttribute('x1', '0'); hline.setAttribute('y1', (i * 20) + '%');
+    hline.setAttribute('x2', '100%'); hline.setAttribute('y2', (i * 20) + '%');
+    hline.setAttribute('stroke', 'rgba(255,255,255,0.04)'); hline.setAttribute('stroke-width', '1');
+    svg.appendChild(hline);
+  }
+}
+
+buildVectorSpace();
+
+// ── Step 4: Search ──
+const searchData = {
+  'golden retriever': [
+    { emoji: '📝', type: 'Text', desc: '"A golden retriever playing fetch"', color: '#6366f1', sim: 97 },
+    { emoji: '🖼️', type: 'Image', desc: 'Photo: dog in a park', color: '#f59e0b', sim: 94 },
+    { emoji: '🎬', type: 'Video', desc: 'Video: puppy training', color: '#ef4444', sim: 89 },
+    { emoji: '📄', type: 'Document', desc: 'Article: dog care guide', color: '#8b5cf6', sim: 82 },
+  ],
+  'Paris': [
+    { emoji: '🖼️', type: 'Image', desc: 'Photo: Eiffel Tower at sunset', color: '#f59e0b', sim: 98 },
+    { emoji: '📝', type: 'Text', desc: '"Best Paris travel spots"', color: '#6366f1', sim: 95 },
+    { emoji: '🎬', type: 'Video', desc: 'Video: Paris city tour', color: '#ef4444', sim: 91 },
+    { emoji: '🎙️', type: 'Audio', desc: 'French travel podcast', color: '#10b981', sim: 78 },
+  ],
+  'rain': [
+    { emoji: '🎙️', type: 'Audio', desc: 'Recording: rain on a rooftop', color: '#10b981', sim: 96 },
+    { emoji: '🖼️', type: 'Image', desc: 'Photo: rainy city street', color: '#f59e0b', sim: 93 },
+    { emoji: '📝', type: 'Text', desc: '"Heavy rainfall expected"', color: '#6366f1', sim: 88 },
+    { emoji: '🎬', type: 'Video', desc: 'Video: thunderstorm footage', color: '#ef4444', sim: 85 },
+  ],
+  'product launch': [
+    { emoji: '📄', type: 'Document', desc: 'Slide deck: Q4 launch plan', color: '#8b5cf6', sim: 97 },
+    { emoji: '🎬', type: 'Video', desc: 'Recording: launch meeting', color: '#ef4444', sim: 92 },
+    { emoji: '📝', type: 'Text', desc: 'Email thread: launch prep', color: '#6366f1', sim: 90 },
+    { emoji: '🖼️', type: 'Image', desc: 'Design: product mockup', color: '#f59e0b', sim: 84 },
+  ],
+  'music concert': [
+    { emoji: '🎙️', type: 'Audio', desc: 'Recording: live concert', color: '#10b981', sim: 99 },
+    { emoji: '🎬', type: 'Video', desc: 'Video: festival performance', color: '#ef4444', sim: 95 },
+    { emoji: '🖼️', type: 'Image', desc: 'Photo: concert stage lights', color: '#f59e0b', sim: 88 },
+    { emoji: '📝', type: 'Text', desc: '"Best music festivals 2025"', color: '#6366f1', sim: 80 },
+  ],
+};
+
+function runSearch(query) {
+  const grid = document.getElementById('results-grid');
+  grid.innerHTML = '';
+  const results = searchData[query] || searchData['golden retriever'];
+  results.forEach((r, i) => {
+    const card = document.createElement('div');
+    card.className = 'result-card';
+    card.style.setProperty('--res-color', r.color);
+    card.innerHTML = `
+      <span class="result-emoji">${r.emoji}</span>
+      <div class="result-type">${r.type}</div>
+      <div class="result-desc">${r.desc}</div>
+      <div style="font-size:10px;color:var(--muted);margin-top:6px;font-weight:700;">${r.sim}% match</div>
+      <div class="similarity-bar"><div class="similarity-fill" style="background:${r.color}"></div></div>
+    `;
+    grid.appendChild(card);
+    setTimeout(() => {
+      card.classList.add('show');
+      card.querySelector('.similarity-fill').style.width = r.sim + '%';
+    }, i * 120);
+  });
+
+  showInfo('#4285f4',
+    '🔍 How this search works',
+    `Your query "${query}" was converted into a vector. The model then found the nearest vectors across ALL file types simultaneously, text, images, audio, video and documents, because they all live in the same shared vector space. No separate searches needed. One query, everything returned.`
+  );
+}
+
+document.getElementById('search-go').addEventListener('click', () => {
+  const q = document.getElementById('search-input').value.trim();
+  if (q) runSearch(q);
+});
+
+document.getElementById('search-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') runSearch(e.target.value.trim());
+});
+
+document.querySelectorAll('.query-chip').forEach(chip => {
+  chip.addEventListener('click', () => {
+    document.getElementById('search-input').value = chip.dataset.q;
+    runSearch(chip.dataset.q);
+  });
+});
+
+// ── Info Panel ──
+function showInfo(color, title, body) {
+  const panel = document.getElementById('info-panel');
+  panel.className = 'info-panel colored';
+  panel.style.setProperty('--panel-color', color);
+  panel.style.borderColor = color + '55';
+  panel.innerHTML = `<div class="info-title">${title}</div><div class="info-body">${body}</div>`;
+}
+
+function resetInfoPanel() {
+  const panel = document.getElementById('info-panel');
+  panel.className = 'info-panel';
+  panel.style.borderColor = '';
+  panel.innerHTML = '<div class="hint">👆 Click any element above to learn more about it</div>';
+}
+</script>
+
+<footer style="position:relative;z-index:10;text-align:center;padding:28px 24px 40px;border-top:1px solid #e0e7ff;margin-top:8px;">
+  <div style="display:inline-flex;align-items:center;gap:12px;background:white;border:1.5px solid #e0e7ff;border-radius:40px;padding:10px 22px;box-shadow:0 2px 12px rgba(99,102,241,0.08);">
+    <div style="width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,#6366f1,#4285f4);display:flex;align-items:center;justify-content:center;font-size:14px;color:white;font-weight:800;font-family:'Nunito',sans-serif;">R</div>
+    <div style="text-align:left;">
+      <div style="font-size:13px;font-weight:800;color:#1e1b4b;font-family:'Nunito',sans-serif;">Richa Nitin Sapre</div>
+      <div style="font-size:11px;color:#6b7280;font-family:'Nunito',sans-serif;letter-spacing:0.5px;">Built while studying multimodal AI · 2026</div>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>
